@@ -12,7 +12,7 @@ export const contractConfig = {
     WETH_UNI_address : '0xC150e53FC05Fa6fEdA74C9B856b513B464213c7d',
     WETH_USDC_address : '0x76BF574a029d5298244C5310f1e289C7A956dF53',
     ABIS: {
-        'ERC20': require('./abi/ERC20.sol/ERC20.json'),
+        'ERC20': require('./abi/ERC20Mintable.sol/ERC20Mintable.json'),
         'Factory': require('./abi/UniswapV3Factory.sol/UniswapV3Factory.json'),
         'Manager': require('./abi/UniswapV3Manager.sol/UniswapV3Manager.json'),
         'Pool': require('./abi/UniswapV3Pool.sol/UniswapV3Pool.json'),
