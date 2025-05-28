@@ -69,14 +69,44 @@ export default function TokenForm() {
         }
     }, [tokenData]);
 
+    // Add token options from constants
+    const tokenOptions = useMemo(() => {
+        return Object.entries(contractConfig.tokens).map(([address, details]) => ({
+            address,
+            symbol: details.symbol
+        }))
+    }, [])
+
+    // Handle token selection
+    const handleTokenSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
+        setTokenAddress(e.target.value)
+    }
+
     return (
-        <div>
+        <>
             <Toaster />
 
             <div
-                className={`max-w-2xl min-w-full xl:min-w-lg w-full lg:mx-auto p-6 flex flex-col gap-6 bg-white rounded-xl ring-[4px] border-2  border-blue-500 ring-blue-500/25"`}
+                className="max-w-2xl min-w-full xl:min-w-lg w-full lg:mx-auto p-6 flex flex-col gap-6 bg-white rounded-xl ring-[4px] border-2  border-blue-500 ring-blue-500/25"
             >
                 <div className="space-y-6">
+
+                <div className="space-y-2">
+                    <label className="block text-sm font-medium text-zinc-700">Select Token</label>
+                        <select 
+                            className="w-full px-3 py-2 bg-white border border-zinc-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            onChange={handleTokenSelect}
+                            value={tokenAddress}
+                        >
+                            <option value="">Select a token</option>
+                            {tokenOptions.map((token) => (
+                                <option key={token.address} value={token.address}>
+                                    {token.symbol}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
                     <InputForm 
                         label="Token Address"
                         placeholder="0x"
@@ -93,7 +123,7 @@ export default function TokenForm() {
                     />
 
                     <div className="bg-white border border-zinc-300 rounded-lg p-4">
-                        <h3 className="text-sm font-medium text-zinc-900 mb-3">Transaction Details</h3>
+                        <h3 className="text-sm font-medium text-zinc-900 mb-3">Token Details</h3>
                         <div className="space-y-2">
                             <div className="flex justify-between items-center">
                                 <span className="text-sm text-zinc-600">Token Name:</span>
@@ -122,6 +152,6 @@ export default function TokenForm() {
                     
                 </div>
             </div>
-        </div>
+        </>
     )
 }
