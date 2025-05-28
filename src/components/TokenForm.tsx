@@ -11,6 +11,8 @@ import { write } from "fs"
 import { formatEther } from "viem"
 import { Toaster, toast } from 'react-hot-toast';
 import { contractConfig } from "@/constants"
+import { ethers } from "ethers"
+import { formatTokenBalance } from "@/utils/utils" 
 
 const formatBalance = (balance: bigint | undefined, decimals: number | undefined): string => {
     if (!balance || !decimals) return '0';
@@ -140,8 +142,8 @@ export default function TokenForm() {
                             <div className="flex justify-between items-center">
                                 <span className="text-sm text-zinc-600">Balance:</span>
                                 <span className="font-mono text-zinc-900">
-                                {formatBalance(
-                                    tokenData?.[2]?.result as bigint | undefined, 
+                                { formatTokenBalance(
+                                    tokenData?.[2]?.result as bigint, 
                                     Number(tokenData?.[0]?.result)
                                 )}
                                 </span>
