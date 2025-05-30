@@ -6,7 +6,9 @@ import { readContract, waitForTransactionReceipt } from '@wagmi/core'
 import { useConfig, useAccount, useChainId, useWriteContract, useReadContracts, useWaitForTransactionReceipt, useReadContract } from "wagmi"
 import { ethers } from 'ethers';
 import InputForm from "@/components/ui/InputField"
+import TokenAmountInput from "@/components/ui/TokenAmountInput"
 import { formatTokenBalance } from "@/utils/utils" 
+import { Toaster, toast } from 'react-hot-toast';
 
 
 export default function SwapSingleForm() {
@@ -16,6 +18,7 @@ export default function SwapSingleForm() {
     const [tokenInAddress, setTokenInAddress] = useState("")
     const [tokenOutAddress, setTokenOutAddress] = useState("")
     const [amountIn, setAmountIn] = useState("")
+    const [amountOut, setAmountOut] = useState("")
     const { data: hash, isPending, error, writeContractAsync } = useWriteContract()  // 执行writeContractAsync时会触发isPending从false变为true，
     const { isLoading: isConfirming, isSuccess: isConfirmed, isError } = useWaitForTransactionReceipt({ 
         confirmations: 1,
@@ -24,7 +27,7 @@ export default function SwapSingleForm() {
 
 
     // 当 tokenAddress 发生变化时，hook 会自动重新获取数据 所有请求会并行执行 返回的 tokenData 是一个数组，包含所有请求的结果
-    const { data: tokenData } = useReadContracts({
+    const { data: tokenData, refetch: refetchTokenData } = useReadContracts({
         contracts: [
             {
                 abi: contractConfig["ABIS"]["ERC20"]["abi"],
@@ -56,7 +59,7 @@ export default function SwapSingleForm() {
         }
     }, [tokenData]);
 
-    const { data: tokenDataOut } = useReadContracts({
+    const { data: tokenDataOut, refetch: refetchTokenOutData } = useReadContracts({
         contracts: [
             {
                 abi: contractConfig["ABIS"]["ERC20"]["abi"],
@@ -79,7 +82,7 @@ export default function SwapSingleForm() {
 
     // 读取报价数据
     type QuoteResult = [bigint, bigint[], number[]];
-    const { data: quoteData, isError: quoteError, isLoading: quoteLoading } = useReadContract({
+    const { data: quoteData, isError: quoteError, isLoading: quoteLoading, refetch: refetchQuoteData } = useReadContract({
         abi: contractConfig["ABIS"]["Quoter"]["abi"],
         address: contractConfig["quoterAddress"] as `0x${string}`,
         functionName: "quote",
@@ -107,7 +110,11 @@ export default function SwapSingleForm() {
         if (quoteData) {
             console.log("quoteData Changed:");
             console.log("- quoteData:", quoteData);
-            
+            const amountOutBigInt = (quoteData as QuoteResult)[0] as bigint;
+            const decimals = tokenDataOut?.[0].result as number;
+            // 使用 formatTokenBalance 工具函数来处理显示
+            const formattedAmount = formatTokenBalance(amountOutBigInt, decimals);
+            setAmountOut(formattedAmount);
         }
     }, [quoteData]);
 
@@ -158,6 +165,47 @@ export default function SwapSingleForm() {
             const swapReceipt = await waitForTransactionReceipt(config, { hash: swapHash })
             console.log("Swap receipt:", swapReceipt);
 
+            // 解析Swap事件，通过swap事件来得到结果
+            const iface = new ethers.Interface(contractConfig["ABIS"]["Pool"]["abi"])
+            const swapLogs = swapReceipt.logs
+                .map(log => {
+                    try {
+                        return iface.parseLog({
+                            topics: log.topics as string[],
+                            data: log.data
+                        })
+                    } catch (e) {
+                        return null
+                    }
+                })
+                .filter(event => event?.name === 'Swap')
+            console.log("swapLogs:", swapLogs)
+
+            if (swapLogs.length > 0) {
+                const swapEvent = swapLogs[0]
+                if (!swapEvent) return
+
+                const { amount0, amount1 } = swapEvent.args
+                console.log("amount0:", amount0, "amount1:", amount1)
+
+                // 根据输入token的地址判断使用amount0还是amount1
+                const isToken0 = tokenInAddress.toLowerCase() < tokenOutAddress.toLowerCase()
+                const amountOut = isToken0 ? amount1 : amount0
+                // amountout应该一直是负的，因为amount0就是表示token0的变化，amount1表示token1的变化，正值表示向池子中加token，负值表示从池子中拿数据
+
+                toast.success(
+                    `Swap successful! ${formatTokenBalance(
+                        BigInt(Math.abs(Number(amountOut))), 
+                        tokenDataOut?.[0]?.result as number
+                    )} tokens received, amount0 ${amount0} amount1 ${amount1}`
+                )
+            }
+
+            // 更新屏幕数据
+            await refetchTokenOutData();
+            await refetchTokenData();
+            await refetchQuoteData();
+
         } catch (error) {
             console.error("Error in handleSwap:", error)
         }
@@ -167,49 +215,24 @@ export default function SwapSingleForm() {
 
     return (
         <div className="max-w-2xl min-w-full xl:min-w-lg w-full lg:mx-auto p-6 flex flex-col gap-6 bg-white rounded-xl ring-[4px] border-2 border-blue-500 ring-blue-500/25">
+            <Toaster />
             <div className="space-y-6">
-                {/* Token Input Section */}
-                <div className="space-y-4">
-                    <div className="space-y-2">
-                        <label className="block text-sm font-medium text-zinc-700">Select Token In</label>
-                        <select 
-                            className="w-full px-3 py-2 bg-white border border-zinc-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                            onChange={handleTokenInSelect}
-                            value={tokenInAddress}
-                        >
-                            <option value="">Select a token</option>
-                            {tokenOptions.map((token) => (
-                                <option key={token.address} value={token.address}>
-                                    {token.symbol}
-                                </option>
-                            ))}
-                        </select>
-                    </div>
-                    <InputForm 
-                        label="Amount"
-                        placeholder="0.0"
-                        value={amountIn}
-                        onChange={e => setAmountIn(e.target.value)}
-                        large={false}
-                    />
-                </div>
+                <TokenAmountInput
+                    amount={amountIn}
+                    onAmountChange={setAmountIn}
+                    selectedToken={tokenInAddress}
+                    onTokenSelect={setTokenInAddress}
+                    tokenOptions={tokenOptions}
+                />
 
-                {/* Token Output Section */}
-                <div className="space-y-2">
-                    <label className="block text-sm font-medium text-zinc-700">Select Token Out</label>
-                    <select 
-                        className="w-full px-3 py-2 bg-white border border-zinc-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        onChange={handleTokenOutSelect}
-                        value={tokenOutAddress}
-                    >
-                        <option value="">Select a token</option>
-                        {tokenOptions.map((token) => (
-                            <option key={token.address} value={token.address}>
-                                {token.symbol}
-                            </option>
-                        ))}
-                    </select>
-                </div>
+                <TokenAmountInput
+                    amount={amountOut}
+                    onAmountChange={setAmountOut}
+                    selectedToken={tokenOutAddress}
+                    onTokenSelect={setTokenOutAddress}
+                    tokenOptions={tokenOptions}
+                />
+                
 
                 <div className="bg-white border border-zinc-300 rounded-lg p-4">
                     <h3 className="text-sm font-medium text-zinc-900 mb-3">TokenIn Details</h3>
