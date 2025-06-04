@@ -8,6 +8,9 @@ import Header from "@/components/Header"
 export const metadata: Metadata = {
   title: "Uniswap",
   description: "Uniswap UI",
+  icons: {
+    icon: '/favicon.ico',
+  },
 };
 
 export default function RootLayout(props: { children: ReactNode}) {
