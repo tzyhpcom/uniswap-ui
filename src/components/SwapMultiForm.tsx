@@ -4,35 +4,118 @@ import { useState, useMemo, useEffect } from "react"
 import { contractConfig } from "@/constants"
 import { readContract, waitForTransactionReceipt } from '@wagmi/core'
 import { useConfig, useAccount, useChainId, useWriteContract, useReadContracts, useWaitForTransactionReceipt, useReadContract } from "wagmi"
-import { ethers } from 'ethers';
-import InputForm from "@/components/ui/InputField"
+import { ethers } from 'ethers'
 import TokenAmountInput from "@/components/ui/TokenAmountInput"
-import { formatTokenBalance } from "@/utils/utils" 
-import { Toaster, toast } from 'react-hot-toast';
+import { formatTokenBalance } from "@/utils/utils"
+import { Toaster, toast } from 'react-hot-toast'
+import createGraph from 'ngraph.graph'
+import path from 'ngraph.path'
+import { sqrtPriceX96ToPrice, formatSqrtPriceX96ToPrice } from "@/utils/utils"
 
 
-export default function SwapSingleForm() {
-    const config = useConfig()  // rainbowkit中配置信息,page的RootLayout中已经包裹在外面了
-    const account = useAccount()  // 当前连接的钱包的信息,page的RootLayout中已经包裹在外面了
-    const chainId = useChainId()  // 当前连接的钱包的信息,page的RootLayout中已经包裹在外面了
+interface Pool {
+    address: string
+    token0: string
+    token1: string
+    tickSpacing: number
+}
+
+class PathFinder {
+    private graph
+    private finder
+
+    constructor(pools: Pool[]) {
+        this.graph = createGraph()
+
+        pools.forEach((pool) => {
+            this.graph.addNode(pool.token0)  // 添加node
+            this.graph.addNode(pool.token1)  // 添加node
+            this.graph.addLink(pool.token0, pool.token1, { pool: pool })  // 添加link
+            this.graph.addLink(pool.token1, pool.token0, { pool: pool })  // 添加link
+        })
+
+        this.finder = path.aStar(this.graph)
+    }
+
+    findPath(tokenIn: string, tokenOut: string) {
+        const found = this.finder.find(tokenIn, tokenOut)
+        if (!found) return null
+        
+        // Return both nodes and edges
+        const edges = []
+        for (let i = 0; i < found.length - 1; i++) {
+            const link = this.graph.getLink(found[i].id, found[i + 1].id)
+            edges.push(link)
+        }
+        return { nodes: found, edges }
+    }
+}
+
+export default function SwapMultiForm() {
+    const config = useConfig()
+    const account = useAccount()
     const [tokenInAddress, setTokenInAddress] = useState("")
     const [tokenOutAddress, setTokenOutAddress] = useState("")
     const [amountIn, setAmountIn] = useState("")
     const [amountOut, setAmountOut] = useState("")
-    const { data: hash, isPending, error, writeContractAsync } = useWriteContract()  // 执行writeContractAsync时会触发isPending从false变为true，
-    const { isLoading: isConfirming, isSuccess: isConfirmed, isError } = useWaitForTransactionReceipt({ 
-        confirmations: 1,
-        hash,
-     })  // hash的状态会影响变量变化
+    interface SwapPathItem {
+        address: string;
+        tickSpacing: number;
+    }
+    const [swapPath, setSwapPath] = useState<SwapPathItem[]>([])
+    const { writeContractAsync } = useWriteContract()
 
+    // Define available pools
+    const pools: Pool[] = useMemo(() => [
+        {
+            address: contractConfig.USDT_USDC_address,
+            token0: contractConfig.usdtAddress,
+            token1: contractConfig.usdcAddress,
+            tickSpacing: 10
+        },
+        {
+            address: contractConfig.WBTC_USDT_address,
+            token0: contractConfig.wbtcAddress,
+            token1: contractConfig.usdtAddress,
+            tickSpacing: 60
+        },
+        {
+            address: contractConfig.WETH_UNI_address,
+            token0: contractConfig.wethAddress,
+            token1: contractConfig.uniAddress,
+            tickSpacing: 60
+        },
+        {
+            address: contractConfig.WETH_USDC_address,
+            token0: contractConfig.wethAddress,
+            token1: contractConfig.usdcAddress,
+            tickSpacing: 60
+        },
+        
+    ], [])
 
-    // 当 tokenAddress 发生变化时，hook 会自动重新获取数据 所有请求会并行执行 返回的 tokenData 是一个数组，包含所有请求的结果
+    // Find optimal path when tokens change
+    // Update the useEffect where path is found
+    useEffect(() => {
+        if (tokenInAddress && tokenOutAddress) {
+            const pathFinder = new PathFinder(pools)
+            const result = pathFinder.findPath(tokenOutAddress, tokenInAddress)
+            if (result) {
+                setSwapPath(result.nodes.map((node, index) => ({
+                    address: String(node.id),
+                    tickSpacing: index < result.edges.length ? result.edges[index]?.data?.pool?.tickSpacing ?? 0 : 0
+                })))
+            }
+        }
+    }, [tokenInAddress, tokenOutAddress, pools])
+
+    // Token data fetching similar to SwapSingleForm
     const { data: tokenData, refetch: refetchTokenData } = useReadContracts({
         contracts: [
             {
                 abi: contractConfig["ABIS"]["ERC20"]["abi"],
-                address: tokenInAddress as `0x${string}`, // 这里会检查地址格式,0x开头且有42个字符
-                functionName: "decimals", 
+                address: tokenInAddress as `0x${string}`,
+                functionName: "decimals",
             },
             {
                 abi: contractConfig["ABIS"]["ERC20"]["abi"],
@@ -43,21 +126,10 @@ export default function SwapSingleForm() {
                 abi: contractConfig["ABIS"]["ERC20"]["abi"],
                 address: tokenInAddress as `0x${string}`,
                 functionName: "balanceOf",
-                args: [account.address as `0x${string}`],  // 用户填的账户
+                args: [account.address as `0x${string}`],
             },
         ],
     })
-
-    // 添加这段代码来监听 tokenData
-    useEffect(() => {
-        if (tokenData) {
-            const [decimals, name, balance] = tokenData;
-            console.log("Token Data Changed:");
-            console.log("- Decimals:", decimals);
-            console.log("- Name:", name);
-            console.log("- Balance:", balance);
-        }
-    }, [tokenData]);
 
     const { data: tokenDataOut, refetch: refetchTokenOutData } = useReadContracts({
         contracts: [
@@ -86,12 +158,18 @@ export default function SwapSingleForm() {
         abi: contractConfig["ABIS"]["Quoter"]["abi"],
         address: contractConfig["quoterAddress"] as `0x${string}`,
         functionName: "quote",
-        args: tokenInAddress && tokenOutAddress && amountIn ? [
-            ethers.concat([
-                ethers.zeroPadValue(tokenInAddress, 20),
-                ethers.zeroPadValue(ethers.toBeHex(60), 3),
-                ethers.zeroPadValue(tokenOutAddress, 20)
-            ]),
+        args: tokenInAddress && tokenOutAddress && amountIn && swapPath ? [
+            ethers.concat(
+                swapPath.reduce((acc: Uint8Array[], pathItem, i) => {
+                    if (i < swapPath.length - 1) {
+                        const addressBytes = ethers.getBytes(ethers.zeroPadValue(pathItem.address, 20));
+                        const tickSpacingBytes = ethers.getBytes(ethers.zeroPadValue(ethers.toBeHex(pathItem.tickSpacing), 3));
+                        return [...acc, addressBytes, tickSpacingBytes];
+                    }
+                    const lastAddressBytes = ethers.getBytes(ethers.zeroPadValue(pathItem.address, 20));
+                    return [...acc, lastAddressBytes];
+                }, [] as Uint8Array[])
+            ),
             ethers.parseUnits(amountIn, tokenData?.[0]?.result as number || 18)
         ] : undefined,
         // 只有当所有必要的值都存在且amountIn是有效数字时才启用
@@ -118,44 +196,33 @@ export default function SwapSingleForm() {
         }
     }, [quoteData]);
 
-    const tokenOptions = useMemo(() => {
-        return Object.entries(contractConfig.tokens).map(([address, details]) => ({
-            address,
-            symbol: details.symbol
-        }))
-    }, [])
-
-    const handleTokenInSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
-        setTokenInAddress(e.target.value)
-    }
-
-    const handleTokenOutSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
-        setTokenOutAddress(e.target.value)
-    }
-
-    async function handleSwap(e: React.MouseEvent<HTMLButtonElement>): Promise<void> {
-        console.log("swap begin")
+    async function handleMultiSwap() {
+        if (!swapPath.length) return
+        console.log("swapPath: ", swapPath)
 
         try {
-            // Properly encode the path using ethers utils
-            const path = ethers.concat([
-                // Token In address - encode as bytes20
-                ethers.zeroPadValue(tokenInAddress, 20),
-                // Fee amount - encode as bytes3
-                ethers.zeroPadValue(ethers.toBeHex(60), 3),
-                // Token Out address - encode as bytes20
-                ethers.zeroPadValue(tokenOutAddress, 20)
-            ])
+            // Construct the path bytes
+            const pathBytes = ethers.concat(
+                swapPath.reduce((acc: Uint8Array[], pathItem, i) => {
+                    if (i < swapPath.length - 1) {
+                        const addressBytes = ethers.getBytes(ethers.zeroPadValue(pathItem.address, 20));
+                        const tickSpacingBytes = ethers.getBytes(ethers.zeroPadValue(ethers.toBeHex(pathItem.tickSpacing), 3));
+                        return [...acc, addressBytes, tickSpacingBytes];
+                    }
+                    const lastAddressBytes = ethers.getBytes(ethers.zeroPadValue(pathItem.address, 20));
+                    return [...acc, lastAddressBytes];
+                }, [] as Uint8Array[])
+            )
 
             const swapHash = await writeContractAsync({
                 abi: contractConfig["ABIS"]["Manager"]["abi"],
                 address: contractConfig["managerAddress"] as `0x${string}`,
                 functionName: "swap",
                 args: [{
-                    path: path, // Already constructed above using ethers.concat
-                    recipient: account.address as `0x${string}`, // Need to get this from useAccount hook
-                    amountIn: ethers.parseUnits(amountIn, tokenData?.[0]?.result as number || 18), // Convert amount to proper decimals
-                    minAmountOut: BigInt(0) // Set minimum amount out (for simplicity set to 0, but in production should calculate slippage)
+                    path: pathBytes,
+                    recipient: account.address as `0x${string}`,
+                    amountIn: ethers.parseUnits(amountIn, tokenData?.[0]?.result as number || 18),
+                    minAmountOut: BigInt(0)
                 }],
             })
 
@@ -182,22 +249,37 @@ export default function SwapSingleForm() {
             console.log("swapLogs:", swapLogs)
 
             if (swapLogs.length > 0) {
-                const swapEvent = swapLogs[0]
-                if (!swapEvent) return
-
-                const { amount0, amount1 } = swapEvent.args
-                console.log("amount0:", amount0, "amount1:", amount1)
-
-                // 根据输出的正负值,负值是用户获取的token
-                const amountOut = amount0 < 0 ? amount0 : amount1;
-                // amountout应该一直是负的，因为amount0就是表示token0的变化，amount1表示token1的变化，正值表示向池子中加token，负值表示从池子中拿数据
-
+                // Collect all swap events information
+                const swapEvents = swapLogs.map((swapEvent, index) => {
+                    if (!swapEvent) return null;
+                    
+                    const { amount0, amount1 } = swapEvent.args;
+                    // 根据输出的正负值,负值是用户获取的token
+                    const amountOut = amount0 < 0 ? amount0 : amount1;
+                    
+                    return {
+                        hop: index + 1,
+                        amount0: amount0.toString(),
+                        amount1: amount1.toString(),
+                        amountOut: formatTokenBalance(
+                            BigInt(Math.abs(Number(amountOut))),
+                            tokenDataOut?.[0]?.result as number
+                        )
+                    };
+                }).filter(Boolean);
+            
+                // Create detailed message for toast
+                const detailedMessage = swapEvents
+                    .map(event => 
+                        `Hop ${event?.hop}: ${event?.amountOut} tokens received\n` +
+                        `(amount0: ${event?.amount0}, amount1: ${event?.amount1})`
+                    )
+                    .join('\n\n');
+            
+                // Show interactive toast
                 toast.success(
-                    `Swap successful! ${formatTokenBalance(
-                        BigInt(Math.abs(Number(amountOut))), 
-                        tokenDataOut?.[0]?.result as number
-                    )} tokens received, amount0 ${amount0} amount1 ${amount1}`
-                )
+                    detailedMessage,
+                );
             }
 
             // 更新屏幕数据
@@ -206,22 +288,25 @@ export default function SwapSingleForm() {
             await refetchQuoteData();
 
         } catch (error) {
-            console.error("Error in handleSwap:", error)
+            console.error("Error in handleMultiSwap:", error)
+            toast.error("Swap failed!")
         }
     }
 
-    
-
     return (
-        <div className="max-w-2xl min-w-full xl:min-w-lg w-full lg:mx-auto p-6 flex flex-col gap-6 bg-white rounded-xl ring-[4px] border-2 border-blue-500 ring-blue-500/25">
+        <div className="max-w-2xl min-w-full xl:min-w-lg w-full lg:mx-auto p-6 flex flex-col gap-6 bg-white rounded-xl border-2 border-blue-500">
             <Toaster />
+            
             <div className="space-y-6">
                 <TokenAmountInput
                     amount={amountIn}
                     onAmountChange={setAmountIn}
                     selectedToken={tokenInAddress}
                     onTokenSelect={setTokenInAddress}
-                    tokenOptions={tokenOptions}
+                    tokenOptions={Object.entries(contractConfig.tokens).map(([address, details]) => ({
+                        address,
+                        symbol: details.symbol
+                    }))}
                 />
 
                 <TokenAmountInput
@@ -229,9 +314,30 @@ export default function SwapSingleForm() {
                     onAmountChange={setAmountOut}
                     selectedToken={tokenOutAddress}
                     onTokenSelect={setTokenOutAddress}
-                    tokenOptions={tokenOptions}
+                    tokenOptions={Object.entries(contractConfig.tokens).map(([address, details]) => ({
+                        address,
+                        symbol: details.symbol
+                    }))}
                 />
-                
+
+                {/* Display swap path */}
+                {swapPath.length > 0 && (
+                    <div className="bg-white border border-zinc-300 rounded-lg p-4">
+                        <h3 className="text-sm font-medium text-zinc-900 mb-3">Swap Path</h3>
+                        <div className="flex items-center gap-2">
+                            {swapPath.map((address, index) => (
+                                <div key={index} className="flex items-center">
+                                    <span className="text-sm">
+                                        {contractConfig.tokens[address.address as unknown as keyof typeof contractConfig.tokens]?.symbol || address.address.slice(0, 6)}
+                                    </span>
+                                    {index < swapPath.length - 1 && (
+                                        <span className="mx-2">→</span>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
                 <div className="bg-white border border-zinc-300 rounded-lg p-4">
                     <h3 className="text-sm font-medium text-zinc-900 mb-3">TokenIn Details</h3>
@@ -297,14 +403,24 @@ export default function SwapSingleForm() {
                         <div className="flex justify-between items-center">
                             <span className="text-sm text-zinc-600">sqrtPriceX96AfterList:</span>
                             <span className="font-mono text-zinc-900">
-                                {(quoteData as QuoteResult)?.[1]}
+                                {
+                                    (quoteData as QuoteResult)?.[1]?.join(", ") || ""
+                                }
+                            </span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                            <span className="text-sm text-zinc-600">Price:</span>
+                            <span className="font-mono text-zinc-900">
+                                {
+                                    (quoteData as QuoteResult)?.[1]?.map(price => formatSqrtPriceX96ToPrice(price)).join(",") || ""
+                                }
                             </span>
                         </div>
                         <div className="flex justify-between items-center">
                             <span className="text-sm text-zinc-600">tickAfterList:</span>
                             <span className="font-mono text-zinc-900">
                             {
-                                (quoteData as QuoteResult)?.[2]
+                                (quoteData as QuoteResult)?.[2]?.join(",") || ""
                             }
                             </span>
                         </div>
@@ -312,10 +428,11 @@ export default function SwapSingleForm() {
                 </div>
 
                 <button
-                    className="w-full py-2 px-4 bg-blue-500 text-white rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-                    onClick={handleSwap}
+                    className="w-full py-2 px-4 bg-blue-500 text-white rounded-md hover:bg-blue-600 focus:outline-none"
+                    onClick={handleMultiSwap}
+                    disabled={!swapPath.length}
                 >
-                    Swap
+                    Multi-Hop Swap
                 </button>
             </div>
         </div>

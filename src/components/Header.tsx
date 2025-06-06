@@ -12,7 +12,7 @@ const navigation = [
     { name: 'Swap Single', href: '/swap-single' },
     { name: 'Pools', href: '/pools' },
     // 后续可以添加更多路由
-    // { name: 'Swap Multi', href: '/swap-multi' },
+    { name: 'Swap Multi', href: '/swap-multi' },
     // { name: 'Liquidity', href: '/liquidity' },
   ]
 

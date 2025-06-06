@@ -77,7 +77,7 @@ export default function PoolList() {
     return (
          <div className="w-full"> {/* 移除 max-w-6xl 和 mx-auto p-6，让表格占据全宽 */}
             <div className="overflow-x-auto"> {/* 保留overflow-x-auto以支持小屏幕滚动 */}
-                <table className="w-full border-collapse border border-gray-300"> {/* 修改 min-w-full 为 w-full */}
+                <table className="w-full border-collapse border border-gray-300">
                     <thead>
                         <tr className="bg-gray-100">
                             <th className="border border-gray-300 px-4 py-2 text-left">Pool</th>
