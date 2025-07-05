@@ -43,3 +43,21 @@ export function formatSqrtPriceX96ToPrice(sqrtPriceX96: string | bigint): string
     const price = sqrtPriceX96ToPrice(BigInt(sqrtPriceX96));
     return price.toFixed(6); // 保留6位小数
 }
+
+/**
+ * Converts price to tick index  math.floor(math.log(p, 1.0001))
+ * @param price The price to convert
+ * @returns The tick index
+ */
+export function priceToTick(price: number): number {
+    return Math.floor(Math.log(price) / Math.log(1.0001));
+}
+
+/**
+ * Converts tick index to price
+ * @param tick The tick index to convert
+ * @returns The price
+ */
+export function tickToPrice(tick: number): number {
+    return Math.pow(1.0001, tick);
+}
